@@ -2612,18 +2612,14 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 245662d47be8ea94793a2a69289a68d6, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  words:
-  - EAST
-  - FROM
-  - PREVAILING
-  - THE
-  - WIND
-  videos:
-  - {fileID: 32900000, guid: 2ffa9ace45d7bb649952e8adcf03dbe2, type: 3}
-  - {fileID: 32900000, guid: b95c4d8e00df243478bf3de4af03fe7c, type: 3}
-  - {fileID: 32900000, guid: 78fbaeba360c2604bbd2c937a6eb648f, type: 3}
-  - {fileID: 32900000, guid: aaaf5e92b893ee54cac285d2d318b358, type: 3}
-  - {fileID: 32900000, guid: 8137585bdf631c14fa8c7e7d7d3f2083, type: 3}
+  videoSets:
+  - {fileID: 102900000, guid: afd61726f272a4545b567b7a88f74dcb, type: 3}
+  - {fileID: 102900000, guid: 844d6ed6c3682f74292c7380e4c7566b, type: 3}
+  - {fileID: 102900000, guid: a0f306300e08ed9408336014598db17c, type: 3}
+  - {fileID: 102900000, guid: 07b7ee9f2e1132e4fb2df5780949867f, type: 3}
+  - {fileID: 102900000, guid: 2f29d7844ee9d3b4d88bbb11d450c541, type: 3}
+  words: []
+  videos: []
   typingManager: {fileID: 2064622284}
   videoPlayer: {fileID: 669219703}
   connectionUI: {fileID: 1975914495}

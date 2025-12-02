@@ -3,12 +3,14 @@ using Unity.Netcode;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine.Video;
+using UnityEditor;
 using TMPro;
 
 public class RaceManager : MonoBehaviour
 {
-    [SerializeField] private List<string> words;
-    [SerializeField] private List<VideoClip> videos;
+    [SerializeField] private List<DefaultAsset> videoSets;
+    public List<string> words;
+    public List<VideoClip> videos;
     [SerializeField] private TypingManager typingManager;
     [SerializeField] private VideoPlayer videoPlayer;
     [SerializeField] private GameObject connectionUI;
@@ -21,6 +23,41 @@ public class RaceManager : MonoBehaviour
     {
         gameOverUI.SetActive(false);
         StartCoroutine(FindLocalCar());
+        StartCoroutine(LoadVideosWhenReady());
+    }
+
+    private IEnumerator LoadVideosWhenReady()
+    {
+        while (myCar == null || myCar.wordSet.Value < 0)
+        {
+            yield return new WaitForSeconds(0.1f);
+        }
+
+        videos.Clear();
+        
+        DefaultAsset folder = videoSets[myCar.wordSet.Value];
+        string folderPath = AssetDatabase.GetAssetPath(folder);
+        string[] guids = AssetDatabase.FindAssets("t:VideoClip", new[] { folderPath });
+        foreach (string guid in guids)
+        {
+            string path = AssetDatabase.GUIDToAssetPath(guid);
+            VideoClip clip = AssetDatabase.LoadAssetAtPath<VideoClip>(path);
+            if (clip != null)
+            {
+                videos.Add(clip);
+            }
+        }
+
+        videoPlayer.clip = videos[myCar.wordsCompleted.Value];
+
+        words.Clear();
+        string wordListPath = folderPath + "/wordlist.txt";
+        if (System.IO.File.Exists(wordListPath))
+        {
+            string fileContent = System.IO.File.ReadAllText(wordListPath);
+            string[] loadedWords = fileContent.Split(new[] { '\n', '\r' }, System.StringSplitOptions.RemoveEmptyEntries);
+            words.AddRange(loadedWords);
+        }
     }
 
     private IEnumerator FindLocalCar()
@@ -35,7 +72,6 @@ public class RaceManager : MonoBehaviour
                 {
                     myCar = car;
                     Debug.Log("Found car");
-                    videoPlayer.clip = videos[myCar.wordsCompleted.Value];
                     yield break;
                 }
             }

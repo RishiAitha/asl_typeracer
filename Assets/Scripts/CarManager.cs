@@ -8,10 +8,16 @@ public class CarManager : NetworkBehaviour
     private RaceManager raceManager;
     public NetworkVariable<int> wordsCompleted = new NetworkVariable<int>(0);
     public NetworkVariable<int> spriteIndex = new NetworkVariable<int>(0);
+    public NetworkVariable<int> wordSet = new NetworkVariable<int>(0);
 
     [SerializeField] Sprite[] carSprites;
     public override void OnNetworkSpawn()
     {
+        if (IsServer && OwnerClientId == 0)
+        {
+            wordSet.Value = Random.Range(0, 5);
+        }
+
         if (IsServer)
         {
             SetSpawnPosition();
@@ -21,11 +27,14 @@ public class CarManager : NetworkBehaviour
         spriteIndex.OnValueChanged += OnSpriteChanged;
 
         SetSprite(spriteIndex.Value);
+        SetDistIncrement();
+    }
 
+    public void SetDistIncrement()
+    {
         Transform finishLine = GameObject.Find("Finish Line").transform;
         RaceManager raceManager = FindObjectsByType<RaceManager>(FindObjectsSortMode.None)[0];
-
-        distIncrement = (finishLine.position.x - transform.position.x) / raceManager.GetWordCount();
+        distIncrement = (finishLine.position.x - transform.position.x) / 5;
     }
 
     public override void OnNetworkDespawn()
@@ -100,6 +109,7 @@ public class CarManager : NetworkBehaviour
     [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
     public void RestartGameServerRpc()
     {
+        wordSet.Value = Random.Range(0, 5);
         CarManager[] allCars = FindObjectsByType<CarManager>(FindObjectsSortMode.None);
         foreach (CarManager car in allCars)
         {
