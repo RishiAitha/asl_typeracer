@@ -135,6 +135,47 @@ public class RaceManager : MonoBehaviour
         myCar.RestartGameServerRpc();
     }
 
+    public void MainMenu()
+    {
+        gameUI.SetActive(false);
+        gameOverUI.SetActive(false);
+        connectionUI.SetActive(true);
+        
+        typingManager.Reset();
+        
+        if (myCar != null)
+        {
+            myCar.RestartGameServerRpc();
+        }
+    }
+
+    public void DisconnectMainMenu()
+    {
+        gameUI.SetActive(false);
+        gameOverUI.SetActive(false);
+        connectionUI.SetActive(true);
+        
+        // disconnect from network
+        if (NetworkManager.Singleton != null)
+        {
+            if (NetworkManager.Singleton.IsHost)
+            {
+                NetworkManager.Singleton.Shutdown();
+            }
+            else if (NetworkManager.Singleton.IsClient)
+            {
+                NetworkManager.Singleton.Shutdown();
+            }
+        }
+        
+        // clean up lobby if matchmaking was used
+        ConnectionManager connectionManager = FindFirstObjectByType<ConnectionManager>();
+        if (connectionManager != null)
+        {
+            connectionManager.CleanupLobby();
+        }
+    }
+
     public int GetWordCount()
     {
         return words.Count;

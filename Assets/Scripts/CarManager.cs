@@ -31,6 +31,7 @@ public class CarManager : NetworkBehaviour
 
         // when sprite value changes, set a different sprite
         spriteIndex.OnValueChanged += OnSpriteChanged;
+        wordSet.OnValueChanged += OnWordSetChanged;
 
         // set initial sprite
         SetSprite(spriteIndex.Value);
@@ -41,12 +42,13 @@ public class CarManager : NetworkBehaviour
     {
         Transform finishLine = GameObject.Find("Finish Line").transform;
         RaceManager raceManager = FindObjectsByType<RaceManager>(FindObjectsSortMode.None)[0];
-        distIncrement = (finishLine.position.x - transform.position.x) / 5;
+        distIncrement = (finishLine.position.x - transform.position.x) / raceManager.GetWordCount();
     }
 
     public override void OnNetworkDespawn()
     {
         spriteIndex.OnValueChanged -= OnSpriteChanged;
+        wordSet.OnValueChanged -= OnWordSetChanged;
     }
 
     private void SetSpawnPosition()
@@ -64,6 +66,11 @@ public class CarManager : NetworkBehaviour
     private void OnSpriteChanged(int oldValue, int newValue)
     {
         SetSprite(newValue);
+    }
+
+    private void OnWordSetChanged(int oldValue, int newValue)
+    {
+        SetDistIncrement();
     }
 
     private void SetSprite(int index)
