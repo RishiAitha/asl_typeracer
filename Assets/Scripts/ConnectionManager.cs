@@ -23,8 +23,10 @@ public class ConnectionManager : MonoBehaviour
 
         try
         {
+            // start unity services for relay
             await UnityServices.InitializeAsync();
 
+            // authenticate to unity relay services
             if (!AuthenticationService.Instance.IsSignedIn)
             {
                 await AuthenticationService.Instance.SignInAnonymouslyAsync();
@@ -69,10 +71,13 @@ public class ConnectionManager : MonoBehaviour
     {
         try
         {
+            // create relay allocation for two other players, excluding host
             Allocation allocation = await RelayService.Instance.CreateAllocationAsync(2);
 
+            // get join code for other players
             hostCode = await RelayService.Instance.GetJoinCodeAsync(allocation.AllocationId);
             
+            // set up netcode transport to use relay
             var transport = NetworkManager.Singleton.GetComponent<UnityTransport>();
             transport.SetHostRelayData(
                 allocation.RelayServer.IpV4,
@@ -98,6 +103,7 @@ public class ConnectionManager : MonoBehaviour
         {
             string joinCode = ipInput.text;
 
+            // join host relay with the given code
             JoinAllocation allocation = await RelayService.Instance.JoinAllocationAsync(joinCode);
 
             var transport = NetworkManager.Singleton.GetComponent<UnityTransport>();

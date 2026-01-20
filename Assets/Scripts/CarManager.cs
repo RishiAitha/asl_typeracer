@@ -2,17 +2,22 @@ using System.Collections;
 using UnityEngine;
 using Unity.Netcode;
 
+// NetworkBehaviour allows this object to exist across the network
 public class CarManager : NetworkBehaviour
 {
     private float distIncrement;
     private RaceManager raceManager;
+    // NetworkVariables automatically sync from server to all clients
     public NetworkVariable<int> wordsCompleted = new NetworkVariable<int>(0);
     public NetworkVariable<int> spriteIndex = new NetworkVariable<int>(0);
     public NetworkVariable<int> wordSet = new NetworkVariable<int>(0);
 
     [SerializeField] Sprite[] carSprites;
+    // called when network object spawns after start
     public override void OnNetworkSpawn()
     {
+        // server side logic
+        // owner client ID is which player owns this specific car
         if (IsServer && OwnerClientId == 0)
         {
             wordSet.Value = Random.Range(0, 5);
@@ -24,8 +29,10 @@ public class CarManager : NetworkBehaviour
             spriteIndex.Value = (int) OwnerClientId % 3;
         }
 
+        // when sprite value changes, set a different sprite
         spriteIndex.OnValueChanged += OnSpriteChanged;
 
+        // set initial sprite
         SetSprite(spriteIndex.Value);
         SetDistIncrement();
     }
@@ -64,6 +71,7 @@ public class CarManager : NetworkBehaviour
         GetComponentsInChildren<SpriteRenderer>()[0].sprite = carSprites[index];
     }
 
+    // client calls server rpc, but it is executed on the server
     [ServerRpc]
     public void MoveCarServerRpc()
     {
@@ -99,6 +107,7 @@ public class CarManager : NetworkBehaviour
         }
     }
 
+    // server calls clientrpc and it gets run on all clients
     [ClientRpc]
     private void GameOverClientRpc(ulong winnerClientId)
     {
@@ -106,17 +115,21 @@ public class CarManager : NetworkBehaviour
         raceManager.GameOver(winnerClientId);
     }
 
+    // serverrpc that anyone can call
     [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
     public void RestartGameServerRpc()
     {
+        // server selects new random word set
         wordSet.Value = Random.Range(0, 5);
+        // all cars get reset
         CarManager[] allCars = FindObjectsByType<CarManager>(FindObjectsSortMode.None);
         foreach (CarManager car in allCars)
         {
-            car.wordsCompleted.Value = 0;
-            car.SetSpawnPosition();
+            car.wordsCompleted.Value = 0; // reset all client words completed values
+            car.SetSpawnPosition(); // sets car spawn positions back to 0
         }
 
+        // reset client side
         RestartGameClientRpc();
     }
 
