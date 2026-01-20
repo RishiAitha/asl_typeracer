@@ -6,6 +6,7 @@ using Unity.Services.Core;
 using Unity.Services.Relay;
 using Unity.Services.Relay.Models;
 using Unity.Services.Authentication;
+using System.Threading.Tasks;
 
 public class ConnectionManager : MonoBehaviour
 {
@@ -71,23 +72,7 @@ public class ConnectionManager : MonoBehaviour
     {
         try
         {
-            // create relay allocation for two other players, excluding host
-            Allocation allocation = await RelayService.Instance.CreateAllocationAsync(2);
-
-            // get join code for other players
-            hostCode = await RelayService.Instance.GetJoinCodeAsync(allocation.AllocationId);
-            
-            // set up netcode transport to use relay
-            var transport = NetworkManager.Singleton.GetComponent<UnityTransport>();
-            transport.SetHostRelayData(
-                allocation.RelayServer.IpV4,
-                (ushort) allocation.RelayServer.Port,
-                allocation.AllocationIdBytes,
-                allocation.Key,
-                allocation.ConnectionData
-            );
-
-            NetworkManager.Singleton.StartHost();
+            hostCode = await StartHostWithRelay(2, "dtls");
         }
         catch (System.Exception e)
         {
@@ -96,27 +81,40 @@ public class ConnectionManager : MonoBehaviour
             statusText.text = $"Error: {e.Message}";
         }
     }
+
+    private async Task<string> StartHostWithRelay(int maxConnections, string connectionType)
+    {
+        await UnityServices.InitializeAsync();
+        if (!AuthenticationService.Instance.IsSignedIn)
+        {
+            await AuthenticationService.Instance.SignInAnonymouslyAsync();
+        }
+        
+        // create two relay allocations for other players
+        var allocation = await RelayService.Instance.CreateAllocationAsync(maxConnections);
+        
+        // set up netcode transport for relay
+        NetworkManager.Singleton.GetComponent<UnityTransport>().SetRelayServerData(
+            AllocationUtils.ToRelayServerData(allocation, connectionType)
+        );
+        
+        // get join code
+        var joinCode = await RelayService.Instance.GetJoinCodeAsync(allocation.AllocationId);
+        
+        return NetworkManager.Singleton.StartHost() ? joinCode : null;
+    }
     
     public async void StartClient()
     {
         try
         {
             string joinCode = ipInput.text;
-
-            // join host relay with the given code
-            JoinAllocation allocation = await RelayService.Instance.JoinAllocationAsync(joinCode);
-
-            var transport = NetworkManager.Singleton.GetComponent<UnityTransport>();
-            transport.SetClientRelayData(
-                allocation.RelayServer.IpV4,
-                (ushort) allocation.RelayServer.Port,
-                allocation.AllocationIdBytes,
-                allocation.Key,
-                allocation.ConnectionData,
-                allocation.HostConnectionData
-            );
-
-            NetworkManager.Singleton.StartClient();
+            bool success = await StartClientWithRelay(joinCode, "dtls");
+            
+            if (!success)
+            {
+                throw new System.Exception("Failed to join game");
+            }
         }
         catch (System.Exception e)
         {
@@ -124,6 +122,25 @@ public class ConnectionManager : MonoBehaviour
             errorDisplaying = true;
             statusText.text = $"Error: {e.Message}";
         }
+    }
+
+    private async Task<bool> StartClientWithRelay(string joinCode, string connectionType)
+    {
+        await UnityServices.InitializeAsync();
+        if (!AuthenticationService.Instance.IsSignedIn)
+        {
+            await AuthenticationService.Instance.SignInAnonymouslyAsync();
+        }
+
+        // join host relay with code
+        var allocation = await RelayService.Instance.JoinAllocationAsync(joinCode: joinCode);
+        
+        // set up netcode transport to use relay
+        NetworkManager.Singleton.GetComponent<UnityTransport>().SetRelayServerData(
+            AllocationUtils.ToRelayServerData(allocation, connectionType)
+        );
+        
+        return !string.IsNullOrEmpty(joinCode) && NetworkManager.Singleton.StartClient();
     }
     
     private void StartGame()
