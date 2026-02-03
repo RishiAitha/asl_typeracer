@@ -5,52 +5,65 @@ using Unity.Netcode;
 // NetworkBehaviour allows this object to exist across the network
 public class CarManager : NetworkBehaviour
 {
+    // ==================== Inspector / Serialized Fields ====================
+    // Different color car sprites
+    [SerializeField] Sprite[] carSprites;
+
+    // ==================== Networked State / Private Fields ====================
     private float distIncrement;
     private RaceManager raceManager;
+
     // NetworkVariables automatically sync from server to all clients
     public NetworkVariable<int> wordsCompleted = new NetworkVariable<int>(0);
     public NetworkVariable<int> spriteIndex = new NetworkVariable<int>(0);
-    public NetworkVariable<int> wordSet = new NetworkVariable<int>(0);
+    public NetworkVariable<int> wordSet = new NetworkVariable<int>(-1);
 
-    [SerializeField] Sprite[] carSprites;
+    // ==================== Unity / Network Lifecycle ====================
     // called when network object spawns after start
     public override void OnNetworkSpawn()
     {
-        // server side logic
-        // owner client ID is which player owns this specific car
-        if (IsServer && OwnerClientId == 0)
-        {
-            wordSet.Value = Random.Range(0, 5);
-        }
-
+        // Set up initial game state
         if (IsServer)
         {
-            SetSpawnPosition();
+            SetSpawnPosition(); // car spawn positions
             spriteIndex.Value = (int) OwnerClientId % 3;
+
+            if (wordSet.Value == 0)
+            {
+                wordSet.Value = -1;
+            }
         }
 
         // when sprite value changes, set a different sprite
-        spriteIndex.OnValueChanged += OnSpriteChanged;
         wordSet.OnValueChanged += OnWordSetChanged;
 
         // set initial sprite
         SetSprite(spriteIndex.Value);
-        SetDistIncrement();
-    }
 
-    public void SetDistIncrement()
-    {
-        Transform finishLine = GameObject.Find("Finish Line").transform;
-        RaceManager raceManager = FindObjectsByType<RaceManager>(FindObjectsSortMode.None)[0];
-        distIncrement = (finishLine.position.x - transform.position.x) / raceManager.GetWordCount();
+        // cache RaceManager if available to avoid repeated lookups
+        if (raceManager == null)
+        {
+            var rms = FindObjectsByType<RaceManager>(FindObjectsSortMode.None);
+            if (rms != null && rms.Length > 0)
+            {
+                raceManager = rms[0];
+            }
+        }
+
+        // set distance increment for cars to travel based on word set size
+        if (wordSet.Value >= 0)
+        {
+            SetDistIncrement();
+        }
     }
 
     public override void OnNetworkDespawn()
     {
-        spriteIndex.OnValueChanged -= OnSpriteChanged;
         wordSet.OnValueChanged -= OnWordSetChanged;
     }
 
+    // ==================== Public API / Helpers ====================
+    // Set car spawn positions
     private void SetSpawnPosition()
     {
         Vector3[] spawnPositions = new Vector3[]
@@ -63,31 +76,140 @@ public class CarManager : NetworkBehaviour
         transform.position = spawnPositions[(int) OwnerClientId % 3];
     }
 
-    private void OnSpriteChanged(int oldValue, int newValue)
+    private void SetSprite(int index)
     {
-        SetSprite(newValue);
+        // Set sprite of car
+        GetComponentsInChildren<SpriteRenderer>()[0].sprite = carSprites[index];
     }
 
     private void OnWordSetChanged(int oldValue, int newValue)
     {
-        SetDistIncrement();
+        if (newValue >= 0)
+        {
+            SetDistIncrement();
+        }
     }
 
-    private void SetSprite(int index)
+    // Compute distance each car moves per correct word
+    public void SetDistIncrement()
     {
-        GetComponentsInChildren<SpriteRenderer>()[0].sprite = carSprites[index];
+        // set up distance for cars to travel as they reach finish line
+        var finishObj = GameObject.Find("Finish Line");
+        if (finishObj == null)
+        {
+            Debug.LogError("SetDistIncrement: 'Finish Line' object not found.");
+            return;
+        }
+
+        Transform finishLine = finishObj.transform;
+        if (raceManager == null)
+        {
+            var raceManagers = FindObjectsByType<RaceManager>(FindObjectsSortMode.None);
+            raceManager = raceManagers[0];
+        }
+
+        int wordCount = raceManager.GetWordCount();
+
+        // sets distance increment for car to travel on successful guess
+        distIncrement = (finishLine.position.x - transform.position.x) / wordCount;
     }
 
+    // ==================== Server RPCs / Client RPCs ====================
     // client calls server rpc, but it is executed on the server
     [ServerRpc]
     public void MoveCarServerRpc()
     {
+        // Move cars server side so they move for everyone
         StartCoroutine(MoveCoroutine());
     }
 
+    // serverrpc that anyone can call
+    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
+    public void RestartGameServerRpc()
+    {
+        // server selects a new random word set different from current
+        CarManager[] allCars = FindObjectsByType<CarManager>(FindObjectsSortMode.None);
+        int currentSet = -1;
+        if (allCars != null && allCars.Length > 0)
+        {
+            currentSet = allCars[0].wordSet.Value;
+        }
+
+        int newSet = Random.Range(0, 5);
+        int attempts = 0;
+        while (newSet == currentSet && attempts < 10)
+        {
+            newSet = Random.Range(0, 5);
+            attempts++;
+        }
+
+        // apply new set and reset all cars
+        foreach (CarManager car in allCars)
+        {
+            car.wordSet.Value = newSet; // set same new word set for everyone
+            car.wordsCompleted.Value = 0; // reset progress
+            car.SetSpawnPosition(); // reset positions
+        }
+
+        // notify clients to update UI/state
+        RestartGameClientRpc();
+    }
+
+    [ClientRpc]
+    private void RestartGameClientRpc()
+    {
+        if (raceManager == null)
+        {
+            var raceManagers = FindObjectsByType<RaceManager>(FindObjectsSortMode.None);
+            if (raceManagers == null || raceManagers.Length == 0)
+            {
+                return;
+            }
+            raceManager = raceManagers[0];
+        }
+
+        // Apply only the client-side reset to avoid invoking server RPCs again.
+        raceManager.ApplyClientRestart();
+    }
+
+    [ClientRpc]
+    private void GameOverClientRpc(ulong winnerClientId)
+    {
+        if (raceManager == null)
+        {
+            var raceManagers = FindObjectsByType<RaceManager>(FindObjectsSortMode.None);
+            raceManager = raceManagers[0];
+        }
+
+        raceManager.GameOver(winnerClientId);
+    }
+
+    // ==================== Movement / Coroutines ====================
     public IEnumerator MoveCoroutine()
     {
         Vector3 start = transform.position;
+        // ensure distIncrement is valid
+        if (float.IsInfinity(distIncrement) || float.IsNaN(distIncrement) || distIncrement == 0f)
+        {
+            // try to recompute for up to 2 seconds
+            float tryDuration = 2f;
+            float waited = 0f;
+            const float step = 0.1f;
+            while ((float.IsInfinity(distIncrement) || float.IsNaN(distIncrement) || distIncrement == 0f) && waited < tryDuration)
+            {
+                SetDistIncrement();
+                yield return new WaitForSeconds(step);
+                waited += step;
+            }
+
+            if (float.IsInfinity(distIncrement) || float.IsNaN(distIncrement) || distIncrement == 0f)
+            {
+                Debug.LogError($"Abort MoveCoroutine: distIncrement still invalid ({distIncrement}) for {gameObject.name} after waiting.");
+                yield break;
+            }
+        }
+
+        // move car
         Vector3 target = new Vector3(transform.position.x + distIncrement, transform.position.y, transform.position.z);
         float deltaTime = 0f;
         float totalTime = 1f;
@@ -101,49 +223,37 @@ public class CarManager : NetworkBehaviour
         transform.position = target;
         wordsCompleted.Value++;
 
-        CheckFinishLine();
+        CheckFinished(); // check if a car finished their words
     }
 
-    private void CheckFinishLine()
+    // ==================== Finish / Game Flow Helpers ====================
+    private void CheckFinished()
     {
         if (!IsServer) return;
-        Transform finishLine = GameObject.Find("Finish Line").transform;
-        if (transform.position.x >= finishLine.position.x)
+
+        // ensure we have a RaceManager to query word count
+        if (raceManager == null)
+        {
+            var rms = FindObjectsByType<RaceManager>(FindObjectsSortMode.None);
+            if (rms == null || rms.Length == 0)
+            {
+                Debug.LogWarning("CheckFinished: RaceManager not found.");
+                return;
+            }
+            raceManager = rms[0];
+        }
+
+        int wordCount = raceManager.GetWordCount();
+        if (wordCount <= 0)
+        {
+            Debug.LogWarning($"CheckFinished: invalid wordCount={wordCount}. Delaying finish check.");
+            return;
+        }
+
+        // If this car has completed all words, announce the winner
+        if (wordsCompleted.Value >= wordCount)
         {
             GameOverClientRpc(OwnerClientId);
         }
-    }
-
-    // server calls clientrpc and it gets run on all clients
-    [ClientRpc]
-    private void GameOverClientRpc(ulong winnerClientId)
-    {
-        RaceManager raceManager = FindObjectsByType<RaceManager>(FindObjectsSortMode.None)[0];
-        raceManager.GameOver(winnerClientId);
-    }
-
-    // serverrpc that anyone can call
-    [Rpc(SendTo.Server, InvokePermission = RpcInvokePermission.Everyone)]
-    public void RestartGameServerRpc()
-    {
-        // server selects new random word set
-        wordSet.Value = Random.Range(0, 5);
-        // all cars get reset
-        CarManager[] allCars = FindObjectsByType<CarManager>(FindObjectsSortMode.None);
-        foreach (CarManager car in allCars)
-        {
-            car.wordsCompleted.Value = 0; // reset all client words completed values
-            car.SetSpawnPosition(); // sets car spawn positions back to 0
-        }
-
-        // reset client side
-        RestartGameClientRpc();
-    }
-
-    [ClientRpc]
-    private void RestartGameClientRpc()
-    {
-        RaceManager raceManager = FindObjectsByType<RaceManager>(FindObjectsSortMode.None)[0];
-        raceManager.Restart();
     }
 }

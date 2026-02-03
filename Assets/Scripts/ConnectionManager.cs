@@ -2,6 +2,7 @@ using TMPro;
 using Unity.Netcode;
 using Unity.Netcode.Transports.UTP;
 using UnityEngine;
+using UnityEngine.UI;
 using Unity.Services.Core;
 using Unity.Services.Relay;
 using Unity.Services.Relay.Models;
@@ -16,30 +17,68 @@ using System;
 
 public class ConnectionManager : MonoBehaviour
 {
+    // ==================== Inspector / Serialized Fields ====================
     [SerializeField] private TextMeshProUGUI statusText;
-    [SerializeField] private TMP_InputField ipInput;
+    [SerializeField] private TMP_InputField joinCodeInput;
     [SerializeField] private GameObject gameUI;
     [SerializeField] private GameObject connectionUI;
+    [SerializeField] private Button quickPlayButton;
+
+    // ==================== Runtime State ====================
+    private bool servicesReady = false;
+    private bool isMatchmaking = false;
     private string hostCode = "";
     private Lobby currentLobby;
     private bool errorDisplaying = false;
-    
+    private bool gameStarted = false;
+
+    // ==================== Unity Lifecycle ====================
     private async void Start()
     {
         connectionUI.SetActive(true);
         gameUI.SetActive(false);
+        quickPlayButton.interactable = false;
 
         try
         {
-            // start unity services for relay
-            await UnityServices.InitializeAsync();
+            statusText.text = "Initializing...";
+            
+            string profileName = "Main";
+            
+            #if UNITY_EDITOR
+            string projectPath = UnityEngine.Application.dataPath;
+            
+            if (projectPath.Contains("_clone_"))
+            {
+                int cloneIndex = projectPath.IndexOf("_clone_");
+                if (cloneIndex >= 0 && projectPath.Length > cloneIndex + 7)
+                {
+                    profileName = "Clone" + projectPath.Substring(cloneIndex + 7, 1);
+                }
+            }
+            #else
+            if (!PlayerPrefs.HasKey("UniqueInstanceID"))
+            {
+                PlayerPrefs.SetString("UniqueInstanceID", System.Guid.NewGuid().ToString());
+                PlayerPrefs.Save();
+            }
+            profileName = PlayerPrefs.GetString("UniqueInstanceID");
+            #endif
+            
+            
+            var options = new InitializationOptions();
+            options.SetProfile(profileName);
+            await UnityServices.InitializeAsync(options);
 
-            // authenticate to unity relay services
             if (!AuthenticationService.Instance.IsSignedIn)
             {
                 await AuthenticationService.Instance.SignInAnonymouslyAsync();
-                Debug.Log("Signed in anonymously");
+                
             }
+
+            servicesReady = true;
+            statusText.text = "Ready";
+            quickPlayButton.interactable = true;
         }
         catch (System.Exception e)
         {
@@ -48,10 +87,10 @@ public class ConnectionManager : MonoBehaviour
             statusText.text = $"Auth Error: {e.Message}";
         }
     }
-    
+
     private void Update()
     {
-        if (NetworkManager.Singleton != null && !errorDisplaying)
+        if (NetworkManager.Singleton != null && !errorDisplaying && servicesReady)
         {   
             int playerCount = NetworkManager.Singleton.ConnectedClientsIds.Count;
             
@@ -59,22 +98,20 @@ public class ConnectionManager : MonoBehaviour
             {
                 statusText.text = $"Connected as Host\nJoinCode: {hostCode}\nPlayers: {playerCount}/3";
             }
-            else if (NetworkManager.Singleton.IsClient)
+            else if (NetworkManager.Singleton.IsClient && NetworkManager.Singleton.IsConnectedClient)
             {
                 statusText.text = $"Connected as Client";
             }
-            else
-            {
-                statusText.text = "Not Connected";
-            }
             
-            if (playerCount == 3)
+            if (playerCount == 3 && !gameStarted)
             {
+                gameStarted = true;
                 StartGame();
             }
         }
     }
-    
+
+    // ==================== Host / Client Startup ====================
     public async void StartHost()
     {
         try
@@ -91,12 +128,6 @@ public class ConnectionManager : MonoBehaviour
 
     private async Task<string> StartHostWithRelay(int maxConnections, string connectionType)
     {
-        await UnityServices.InitializeAsync();
-        if (!AuthenticationService.Instance.IsSignedIn)
-        {
-            await AuthenticationService.Instance.SignInAnonymouslyAsync();
-        }
-        
         // create two relay allocations for other players
         var allocation = await RelayService.Instance.CreateAllocationAsync(maxConnections);
         
@@ -110,12 +141,12 @@ public class ConnectionManager : MonoBehaviour
         
         return NetworkManager.Singleton.StartHost() ? joinCode : null;
     }
-    
+
     public async void StartClient()
     {
         try
         {
-            string joinCode = ipInput.text;
+            string joinCode = joinCodeInput.text;
             bool success = await StartClientWithRelay(joinCode, "dtls");
             
             if (!success)
@@ -133,12 +164,6 @@ public class ConnectionManager : MonoBehaviour
 
     private async Task<bool> StartClientWithRelay(string joinCode, string connectionType)
     {
-        await UnityServices.InitializeAsync();
-        if (!AuthenticationService.Instance.IsSignedIn)
-        {
-            await AuthenticationService.Instance.SignInAnonymouslyAsync();
-        }
-
         // join host relay with code
         var allocation = await RelayService.Instance.JoinAllocationAsync(joinCode: joinCode);
         
@@ -150,10 +175,26 @@ public class ConnectionManager : MonoBehaviour
         return !string.IsNullOrEmpty(joinCode) && NetworkManager.Singleton.StartClient();
     }
 
+    // ==================== Matchmaking ====================
     public async void StartMatchmaking()
     {
+        if (!servicesReady)
+        {
+            statusText.text = "Services not ready, please wait...";
+            return;
+        }
+
+        if (isMatchmaking)
+        {
+            return;
+        }
+
         try
         {
+            isMatchmaking = true;
+            quickPlayButton.interactable = false;
+
+            
             statusText.text = "Finding match...";
             var players = new List<Unity.Services.Matchmaker.Models.Player>
             {
@@ -168,7 +209,6 @@ public class ConnectionManager : MonoBehaviour
             // create ticket
             var ticketResponse = await MatchmakerService.Instance.CreateTicketAsync(players, options);
 
-            Debug.Log(ticketResponse.Id);
 
             await PollTicketStatus(ticketResponse.Id);
         }
@@ -178,108 +218,95 @@ public class ConnectionManager : MonoBehaviour
             errorDisplaying = true;
             statusText.text = $"Matchmaking Error: {e.Message}";
         }
+        finally
+        {
+            isMatchmaking = false;
+            quickPlayButton.interactable = true;
+        }
     }
 
     private async Task PollTicketStatus(string ticketId)
     {
-        MultiplayAssignment assignment = null;
-        bool gotAssignment = false;
         float timeout = 60f;
         float elapsed = 0f;
 
-        do
+        // polling ticket status
+
+        while (elapsed < timeout)
         {
-            // rate limit delay
-            await Task.Delay(TimeSpan.FromSeconds(1f));
-            elapsed += 1f;
-
-            // check for timeout
-            if (elapsed >= timeout)
-            {
-                statusText.text = "Matchmaking timed out. Try again?";
-                await MatchmakerService.Instance.DeleteTicketAsync(ticketId);
-                errorDisplaying = false;
-                return;
-            }
-
-            // poll ticket
             var ticketStatus = await MatchmakerService.Instance.GetTicketAsync(ticketId);
+
             if (ticketStatus == null)
             {
-                continue;
+                Debug.LogWarning("[Matchmaking] Ticket status is null");
             }
-
-            statusText.text = $"Finding match... {(int) (timeout - elapsed)}s";
-
-            if (ticketStatus.Type == typeof(MultiplayAssignment))
+            else
             {
-                assignment = ticketStatus.Value as MultiplayAssignment;
+                // Some queues return a full MultiplayAssignment, others a lightweight MatchIdAssignment.
+                if (ticketStatus.Type == typeof(MultiplayAssignment))
+                {
+                    var assignment = ticketStatus.Value as MultiplayAssignment;
+                    if (assignment != null && assignment.Status == MultiplayAssignment.StatusOptions.Found && !string.IsNullOrEmpty(assignment.MatchId))
+                    {
+                        statusText.text = "Match found! Connecting...";
+                        await HandleMatchAssignment(assignment.MatchId);
+                        return;
+                    }
+                }
+                else if (ticketStatus.Type == typeof(MatchIdAssignment))
+                {
+                    var matchIdAssign = ticketStatus.Value as MatchIdAssignment;
+                    if (!string.IsNullOrEmpty(matchIdAssign?.MatchId))
+                    {
+                        statusText.text = "Match found! Connecting...";
+                        await HandleMatchAssignment(matchIdAssign.MatchId);
+                        return;
+                    }
+                }
             }
 
-            switch (assignment?.Status)
+            // wait and update countdown
+            for (int i = 0; i < 6; i++)
             {
-                case MultiplayAssignment.StatusOptions.Found:
-                    gotAssignment = true;
-                    Debug.Log("Match Found");
-                    statusText.text = "Match Found";
-
-                    await HandleMatchAssignment(assignment);
-                    break;
-                case MultiplayAssignment.StatusOptions.InProgress:
-                    break;
-                case MultiplayAssignment.StatusOptions.Failed:
-                    gotAssignment = true;
-                    Debug.LogError("Failed to get ticket status. Error: " + assignment.Message);
-                    statusText.text = $"Matchmaking failed: {assignment.Message}";
-                    errorDisplaying = true;
-                    break;
-                case MultiplayAssignment.StatusOptions.Timeout:
-                    gotAssignment = true;
-                    Debug.LogError("Failed to get ticket status. Ticket timed out.");
-                    statusText.text = "Matchmaking timed out. Try again?";
-                    errorDisplaying = false;
-                    break;
-                default:
-                    throw new InvalidOperationException();
+                statusText.text = $"Finding match... {(int)(timeout - elapsed - (i * 0.5f))}s";
+                await Task.Delay(500);
             }
-        } while (!gotAssignment);
+            elapsed += 3f;
+        }
+
+        Debug.LogWarning($"[Matchmaking] Ticket {ticketId} timed out after {timeout}s");
+        statusText.text = "Matchmaking timed out. Try again?";
+        try { await MatchmakerService.Instance.DeleteTicketAsync(ticketId); } catch { }
+        errorDisplaying = false;
     }
 
-    private async Task HandleMatchAssignment(MultiplayAssignment assignment) {
+    // ==================== Lobby / Match Handling ====================
+     // Handle matchmaker responses that return only a match id
+    private async Task HandleMatchAssignment(string matchId)
+    {
         try
         {
-            // get match ID from assignment
-            string matchId = assignment.MatchId;
-            Debug.Log($"Match ID: {matchId}");
+            statusText.text = "Creating/joining lobby...";
 
-            statusText.text = "Joining lobby...";
-
-            var joinRequest = new JoinLobbyByIdOptions {};
-
-            try
+            var createOptions = new CreateLobbyOptions
             {
-                // join lobby if it exists
-                currentLobby = await LobbyService.Instance.JoinLobbyByIdAsync(matchId, joinRequest);
-                Debug.Log($"Joined lobby: {currentLobby.Id}");
-            }
-            catch
-            {
-                // create a lobby if it doesn't exist already
-                var createRequest = new CreateLobbyOptions
-                {
-                    IsPrivate = false,
-                    Data = new Dictionary<string, DataObject>()
-                };
+                IsPrivate = false,
+                Data = new Dictionary<string, DataObject>()
+            };
 
-                currentLobby = await LobbyService.Instance.CreateLobbyAsync(
-                    lobbyName: $"Match_{matchId}",
-                    maxPlayers: 3,
-                    createRequest
-                );
-                Debug.Log($"Created lobby: {currentLobby.Id}");
-            }
+            // create lobby if it doesn't exist, join it otherwise
+            currentLobby = await LobbyService.Instance.CreateOrJoinLobbyAsync(
+                lobbyId: matchId,
+                lobbyName: $"Race_{matchId.Substring(0, 8)}",
+                maxPlayers: 3,
+                options: createOptions
+            );
 
-            if (currentLobby.HostId == AuthenticationService.Instance.PlayerId)
+
+            // check if you are host
+            bool isHost = currentLobby.HostId == AuthenticationService.Instance.PlayerId;
+
+            if (isHost)
             {
                 await SetupAsHost();
             }
@@ -290,7 +317,8 @@ public class ConnectionManager : MonoBehaviour
         }
         catch (System.Exception e)
         {
-            Debug.LogError($"Match assignment error: {e.Message}");
+            Debug.LogError($"[Lobby] Match assignment error: {e.Message}");
+            Debug.LogError($"[Lobby] Stack trace: {e.StackTrace}");
             statusText.text = $"Connection error: {e.Message}";
             errorDisplaying = true;
         }
@@ -298,14 +326,12 @@ public class ConnectionManager : MonoBehaviour
 
     private async Task SetupAsHost()
     {
-        Debug.Log("Setting up host");
-        statusText.text = "Setting up as host...";
+    statusText.text = "Setting up as host...";
 
         try
         {
             // get relay code
             hostCode = await StartHostWithRelay(2, "dtls");
-            Debug.Log($"Relay join code: {hostCode}");
 
             // share relay codes in lobby
             var updateOptions = new UpdateLobbyOptions
@@ -317,7 +343,7 @@ public class ConnectionManager : MonoBehaviour
             };
 
             currentLobby = await LobbyService.Instance.UpdateLobbyAsync(currentLobby.Id, updateOptions);
-            Debug.Log("Shared relay join code in lobby");
+            
 
             StartCoroutine(LobbyHeartbeat());
             statusText.text = "Hosting game...";
@@ -332,7 +358,6 @@ public class ConnectionManager : MonoBehaviour
 
     private async Task SetupAsClient()
     {
-        Debug.Log("Setting up client");
         statusText.text = "Setting up as client...";
 
         try
@@ -344,7 +369,7 @@ public class ConnectionManager : MonoBehaviour
 
             while (string.IsNullOrEmpty(relayJoinCode) && attempts < maxAttempts)
             {
-                await Task.Delay(1000);
+                await Task.Delay(2000);
                 attempts++;
 
                 // refresh lobby data
@@ -354,11 +379,11 @@ public class ConnectionManager : MonoBehaviour
                 if (currentLobby.Data != null && currentLobby.Data.ContainsKey("RelayJoinCode"))
                 {
                     relayJoinCode = currentLobby.Data["RelayJoinCode"].Value;
-                    Debug.Log($"Got Relay join code: {relayJoinCode}");
+                    
                 }
                 else
                 {
-                    statusText.text = $"Waiting for host... {maxAttempts - attempts}s";
+                    statusText.text = $"Waiting for host... {(maxAttempts - attempts) * 2}s";
                 }
             }
 
@@ -393,7 +418,8 @@ public class ConnectionManager : MonoBehaviour
             yield return new WaitForSeconds(15f);
         }
     }
-    
+
+    // ==================== Cleanup / Lifecycle ====================
     private void OnDestroy()
     {
         // clean up lobby when leaving
@@ -418,6 +444,7 @@ public class ConnectionManager : MonoBehaviour
                     await LobbyService.Instance.RemovePlayerAsync(currentLobby.Id, AuthenticationService.Instance.PlayerId);
                 }
                 currentLobby = null;
+                gameStarted = false;
             }
             catch (System.Exception e)
             {
@@ -426,8 +453,24 @@ public class ConnectionManager : MonoBehaviour
         }
     }
 
+    // ==================== Game Start / UI ====================
     private void StartGame()
     {
+        Debug.Log("start game");
+        if (NetworkManager.Singleton.IsServer)
+        {
+            CarManager[] allCars = FindObjectsByType<CarManager>(FindObjectsSortMode.None);
+            Debug.Log("Starting game, word set value is " + allCars[0].wordSet.Value);
+            if (allCars.Length == 3 && allCars[0].wordSet.Value == -1)
+            {
+                int randomSet = UnityEngine.Random.Range(0, 5);
+                foreach (CarManager car in allCars)
+                {
+                    car.wordSet.Value = randomSet;
+                }
+            }
+        }
+
         connectionUI.SetActive(false);
         gameUI.SetActive(true);
     }
