@@ -15,6 +15,7 @@ using Unity.Services.Authentication;
 using System.Threading.Tasks;
 using System;
 
+
 public class ConnectionManager : MonoBehaviour
 {
     // ==================== Inspector / Serialized Fields ====================
@@ -31,20 +32,22 @@ public class ConnectionManager : MonoBehaviour
     private Lobby currentLobby;
     private bool errorDisplaying = false;
     private bool gameStarted = false;
+    private Coroutine heartbeatCoroutine = null;
 
     // ==================== Unity Lifecycle ====================
     private async void Start()
     {
-        connectionUI.SetActive(true);
-        gameUI.SetActive(false);
-        quickPlayButton.interactable = false;
+        if (connectionUI != null) connectionUI.SetActive(true);
+        if (gameUI != null) gameUI.SetActive(false);
+        if (quickPlayButton != null) quickPlayButton.interactable = false;
 
         try
         {
-            statusText.text = "Initializing...";
+            if (statusText != null) statusText.text = "Initializing...";
             
             string profileName = "Main";
             
+            // weird profile id stuff for parrelsync and built versions
             #if UNITY_EDITOR
             string projectPath = UnityEngine.Application.dataPath;
             
@@ -57,9 +60,11 @@ public class ConnectionManager : MonoBehaviour
                 }
             }
             #else
+            
             if (!PlayerPrefs.HasKey("UniqueInstanceID"))
             {
-                PlayerPrefs.SetString("UniqueInstanceID", System.Guid.NewGuid().ToString());
+                string shortId = System.Guid.NewGuid().ToString("N").Substring(0, 12);
+                PlayerPrefs.SetString("UniqueInstanceID", shortId);
                 PlayerPrefs.Save();
             }
             profileName = PlayerPrefs.GetString("UniqueInstanceID");
@@ -77,23 +82,25 @@ public class ConnectionManager : MonoBehaviour
             }
 
             servicesReady = true;
-            statusText.text = "Ready";
-            quickPlayButton.interactable = true;
+            if (statusText != null) statusText.text = "Ready";
+            if (quickPlayButton != null) quickPlayButton.interactable = true;
         }
         catch (System.Exception e)
         {
             Debug.LogError($"Authentication Error: {e.Message}");
             errorDisplaying = true;
-            statusText.text = $"Auth Error: {e.Message}";
+            if (statusText != null) statusText.text = $"Auth Error: {e.Message}";
         }
     }
 
     private void Update()
     {
+        if (statusText == null) return;
+
         if (NetworkManager.Singleton != null && !errorDisplaying && servicesReady)
-        {   
+        {
             int playerCount = NetworkManager.Singleton.ConnectedClientsIds.Count;
-            
+
             if (NetworkManager.Singleton.IsHost)
             {
                 statusText.text = $"Connected as Host\nJoinCode: {hostCode}\nPlayers: {playerCount}/3";
@@ -102,7 +109,7 @@ public class ConnectionManager : MonoBehaviour
             {
                 statusText.text = $"Connected as Client";
             }
-            
+
             if (playerCount == 3 && !gameStarted)
             {
                 gameStarted = true;
@@ -122,7 +129,7 @@ public class ConnectionManager : MonoBehaviour
         {
             Debug.LogError($"Relay Error: {e.Message}");
             errorDisplaying = true;
-            statusText.text = $"Error: {e.Message}";
+            if (statusText != null) statusText.text = $"Error: {e.Message}";
         }
     }
 
@@ -158,7 +165,7 @@ public class ConnectionManager : MonoBehaviour
         {
             Debug.LogError($"Join Error: {e.Message}");
             errorDisplaying = true;
-            statusText.text = $"Error: {e.Message}";
+            if (statusText != null) statusText.text = $"Error: {e.Message}";
         }
     }
 
@@ -192,10 +199,10 @@ public class ConnectionManager : MonoBehaviour
         try
         {
             isMatchmaking = true;
-            quickPlayButton.interactable = false;
+            if (quickPlayButton != null) quickPlayButton.interactable = false;
 
             
-            statusText.text = "Finding match...";
+            if (statusText != null) statusText.text = "Finding match...";
             var players = new List<Unity.Services.Matchmaker.Models.Player>
             {
                 new (AuthenticationService.Instance.PlayerId, new Dictionary<string, object>())
@@ -216,12 +223,12 @@ public class ConnectionManager : MonoBehaviour
         {
             Debug.LogError($"Matchmaking Error: {e.Message}");
             errorDisplaying = true;
-            statusText.text = $"Matchmaking Error: {e.Message}";
+            if (statusText != null) statusText.text = $"Matchmaking Error: {e.Message}";
         }
         finally
         {
             isMatchmaking = false;
-            quickPlayButton.interactable = true;
+            if (quickPlayButton != null) quickPlayButton.interactable = true;
         }
     }
 
@@ -248,7 +255,7 @@ public class ConnectionManager : MonoBehaviour
                     var assignment = ticketStatus.Value as MultiplayAssignment;
                     if (assignment != null && assignment.Status == MultiplayAssignment.StatusOptions.Found && !string.IsNullOrEmpty(assignment.MatchId))
                     {
-                        statusText.text = "Match found! Connecting...";
+                        if (statusText != null) statusText.text = "Match found! Connecting...";
                         await HandleMatchAssignment(assignment.MatchId);
                         return;
                     }
@@ -258,7 +265,7 @@ public class ConnectionManager : MonoBehaviour
                     var matchIdAssign = ticketStatus.Value as MatchIdAssignment;
                     if (!string.IsNullOrEmpty(matchIdAssign?.MatchId))
                     {
-                        statusText.text = "Match found! Connecting...";
+                        if (statusText != null) statusText.text = "Match found! Connecting...";
                         await HandleMatchAssignment(matchIdAssign.MatchId);
                         return;
                     }
@@ -268,14 +275,14 @@ public class ConnectionManager : MonoBehaviour
             // wait and update countdown
             for (int i = 0; i < 6; i++)
             {
-                statusText.text = $"Finding match... {(int)(timeout - elapsed - (i * 0.5f))}s";
+                if (statusText != null) statusText.text = $"Finding match... {(int)(timeout - elapsed - (i * 0.5f))}s";
                 await Task.Delay(500);
             }
             elapsed += 3f;
         }
 
         Debug.LogWarning($"[Matchmaking] Ticket {ticketId} timed out after {timeout}s");
-        statusText.text = "Matchmaking timed out. Try again?";
+        if (statusText != null) statusText.text = "Matchmaking timed out. Try again?";
         try { await MatchmakerService.Instance.DeleteTicketAsync(ticketId); } catch { }
         errorDisplaying = false;
     }
@@ -286,7 +293,7 @@ public class ConnectionManager : MonoBehaviour
     {
         try
         {
-            statusText.text = "Creating/joining lobby...";
+            if (statusText != null) statusText.text = "Creating/joining lobby...";
 
             var createOptions = new CreateLobbyOptions
             {
@@ -319,14 +326,14 @@ public class ConnectionManager : MonoBehaviour
         {
             Debug.LogError($"[Lobby] Match assignment error: {e.Message}");
             Debug.LogError($"[Lobby] Stack trace: {e.StackTrace}");
-            statusText.text = $"Connection error: {e.Message}";
+            if (statusText != null) statusText.text = $"Connection error: {e.Message}";
             errorDisplaying = true;
         }
     }
 
     private async Task SetupAsHost()
     {
-    statusText.text = "Setting up as host...";
+    if (statusText != null) statusText.text = "Setting up as host...";
 
         try
         {
@@ -345,20 +352,20 @@ public class ConnectionManager : MonoBehaviour
             currentLobby = await LobbyService.Instance.UpdateLobbyAsync(currentLobby.Id, updateOptions);
             
 
-            StartCoroutine(LobbyHeartbeat());
-            statusText.text = "Hosting game...";
+            heartbeatCoroutine = StartCoroutine(LobbyHeartbeat());
+            if (statusText != null) statusText.text = "Hosting game...";
         }
         catch (System.Exception e)
         {
             Debug.LogError($"Host setup error: {e.Message}");
-            statusText.text = $"Host error: {e.Message}";
+            if (statusText != null) statusText.text = $"Host error: {e.Message}";
             errorDisplaying = true;
         }
     }
 
     private async Task SetupAsClient()
     {
-        statusText.text = "Setting up as client...";
+        if (statusText != null) statusText.text = "Setting up as client...";
 
         try
         {
@@ -383,7 +390,7 @@ public class ConnectionManager : MonoBehaviour
                 }
                 else
                 {
-                    statusText.text = $"Waiting for host... {(maxAttempts - attempts) * 2}s";
+                    if (statusText != null) statusText.text = $"Waiting for host... {(maxAttempts - attempts) * 2}s";
                 }
             }
 
@@ -400,21 +407,30 @@ public class ConnectionManager : MonoBehaviour
                 throw new System.Exception("Failed to connect to host");
             }
             
-            statusText.text = "Connected";
+            if (statusText != null) statusText.text = "Connected";
         }
         catch (System.Exception e)
         {
             Debug.LogError($"Client setup error: {e.Message}");
-            statusText.text = $"Connection error: {e.Message}";
+            if (e.Message != null && e.Message.ToLower().Contains("not found"))
+            {
+                // lobby disappeared; make sure we clean up local state
+                CleanupLobby();
+                if (statusText != null) statusText.text = "Host left or lobby not found.";
+            }
+            else
+            {
+                if (statusText != null) statusText.text = $"Connection error: {e.Message}";
+            }
             errorDisplaying = true;
         }
     }
 
     private System.Collections.IEnumerator LobbyHeartbeat()
     {
-        while (currentLobby != null && NetworkManager.Singleton.IsHost)
+        while (currentLobby != null && NetworkManager.Singleton != null && NetworkManager.Singleton.IsHost)
         {
-            LobbyService.Instance.SendHeartbeatPingAsync(currentLobby.Id);
+            try { LobbyService.Instance.SendHeartbeatPingAsync(currentLobby.Id); } catch { }
             yield return new WaitForSeconds(15f);
         }
     }
@@ -431,6 +447,12 @@ public class ConnectionManager : MonoBehaviour
 
     public async void CleanupLobby()
     {
+        if (heartbeatCoroutine != null)
+        {
+            try { StopCoroutine(heartbeatCoroutine); } catch { }
+            heartbeatCoroutine = null;
+        }
+
         if (currentLobby != null)
         {
             try
@@ -443,12 +465,27 @@ public class ConnectionManager : MonoBehaviour
                 {
                     await LobbyService.Instance.RemovePlayerAsync(currentLobby.Id, AuthenticationService.Instance.PlayerId);
                 }
-                currentLobby = null;
-                gameStarted = false;
             }
             catch (System.Exception e)
             {
-                Debug.LogError($"Cleanup error: {e.Message}");
+                // ignore lobby-not-found during cleanup, but log other issues
+                if (e.Message != null && e.Message.ToLower().Contains("not found"))
+                {
+                    Debug.LogWarning($"CleanupLobby: lobby not found (may have been deleted): {e.Message}");
+                }
+                else
+                {
+                    Debug.LogError($"Cleanup error: {e.Message}");
+                }
+            }
+            finally
+            {
+                currentLobby = null;
+                gameStarted = false;
+                isMatchmaking = false;
+                errorDisplaying = false;
+                if (statusText != null) statusText.text = "Disconnected";
+                if (quickPlayButton != null) quickPlayButton.interactable = servicesReady;
             }
         }
     }
@@ -471,7 +508,7 @@ public class ConnectionManager : MonoBehaviour
             }
         }
 
-        connectionUI.SetActive(false);
-        gameUI.SetActive(true);
+        if (connectionUI != null) connectionUI.SetActive(false);
+        if (gameUI != null) gameUI.SetActive(true);
     }
 }

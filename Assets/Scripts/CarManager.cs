@@ -110,6 +110,14 @@ public class CarManager : NetworkBehaviour
 
         int wordCount = raceManager.GetWordCount();
 
+        // guard against invalid word count to avoid divide-by-zero
+        if (wordCount <= 0)
+        {
+            Debug.LogWarning($"SetDistIncrement: invalid wordCount={wordCount} for {gameObject.name}");
+            distIncrement = 0f;
+            return;
+        }
+
         // sets distance increment for car to travel on successful guess
         distIncrement = (finishLine.position.x - transform.position.x) / wordCount;
     }
@@ -135,11 +143,22 @@ public class CarManager : NetworkBehaviour
             currentSet = allCars[0].wordSet.Value;
         }
 
-        int newSet = Random.Range(0, 5);
+        // pick from available video sets exposed by RaceManager
+        int newSet = 0;
         int attempts = 0;
+        int setCount = 1;
+        var rms = FindObjectsByType<RaceManager>(FindObjectsSortMode.None);
+        if (rms != null && rms.Length > 0)
+        {
+            setCount = rms[0].GetVideoSetCount();
+            if (setCount <= 0) setCount = 1;
+        }
+
+        newSet = Random.Range(0, setCount);
+        attempts = 0;
         while (newSet == currentSet && attempts < 10)
         {
-            newSet = Random.Range(0, 5);
+            newSet = Random.Range(0, setCount);
             attempts++;
         }
 

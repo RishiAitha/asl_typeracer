@@ -29,23 +29,80 @@ public class RaceManager : MonoBehaviour
         StartCoroutine(LoadVideosWhenReady());
     }
 
+    private void OnEnable()
+    {
+        StartCoroutine(WatchNetworkManager());
+    }
+
+    private void OnDisable()
+    {
+        // try to unsubscribe from NetworkManager callbacks if possible
+        if (NetworkManager.Singleton != null)
+        {
+            try
+            {
+                NetworkManager.Singleton.OnClientConnectedCallback -= OnClientConnected;
+                NetworkManager.Singleton.OnClientDisconnectCallback -= OnClientDisconnected;
+            }
+            catch { }
+        }
+    }
+
+    private System.Collections.IEnumerator WatchNetworkManager()
+    {
+        // wait until NetworkManager exists, then subscribe to connect/disconnect
+        while (NetworkManager.Singleton == null)
+        {
+            yield return null;
+        }
+
+        NetworkManager.Singleton.OnClientConnectedCallback += OnClientConnected;
+        NetworkManager.Singleton.OnClientDisconnectCallback += OnClientDisconnected;
+    }
+
     // ==================== Coroutines / Loading ====================
     private IEnumerator LoadVideosWhenReady()
     {
+        // wait until local car exists and has a wordSet assigned
         while (myCar == null || myCar.wordSet.Value < 0)
         {
             yield return new WaitForSeconds(0.1f);
         }
-        
 
-        // get the video set from the list
-        VideoSet selectedSet = videoSetsData[myCar.wordSet.Value];
+        // load initial set for current value
+        LoadVideoSet(myCar.wordSet.Value);
+    }
+
+    // load videos/words for given word set index and notify cars to recompute distIncrement
+    private void LoadVideoSet(int setIndex)
+    {
+        if (setIndex < 0 || setIndex >= videoSetsData.Count)
+        {
+            Debug.LogWarning($"LoadVideoSet: invalid setIndex={setIndex}");
+            return;
+        }
+
+        VideoSet selectedSet = videoSetsData[setIndex];
         videos = new List<VideoClip>(selectedSet.videos);
         words = new List<string>(selectedSet.words);
 
-        videoPlayer.clip = videos[myCar.wordsCompleted.Value];
+        // clamp wordsCompleted and update clip
+        if (myCar != null)
+        {
+            int idx = myCar.wordsCompleted.Value;
+            if (videos == null || videos.Count == 0)
+            {
+                videoPlayer.clip = null;
+            }
+            else
+            {
+                if (idx < 0) idx = 0;
+                if (idx >= videos.Count) idx = videos.Count - 1;
+                videoPlayer.clip = videos[idx];
+            }
+        }
 
-        // Now that words/videos are loaded, ensure all cars compute their distIncrement
+        // ensure all cars recompute their movement increment now that word count changed
         CarManager[] allCars = FindObjectsByType<CarManager>(FindObjectsSortMode.None);
         foreach (CarManager car in allCars)
         {
@@ -66,12 +123,60 @@ public class RaceManager : MonoBehaviour
                         myCar = car;
                     // subscribe to networked wordsCompleted changes so client updates video when server increments
                     myCar.wordsCompleted.OnValueChanged += OnWordsCompletedChanged;
+                    // subscribe to wordSet changes so clients reload videos when server picks a new set on restart
+                    myCar.wordSet.OnValueChanged += OnWordSetValueChanged;
+
+                    // if a set is already assigned, load it immediately
+                    if (myCar.wordSet.Value >= 0)
+                    {
+                        LoadVideoSet(myCar.wordSet.Value);
+                    }
+
                     yield break;
                     }
             }
             
             yield return new WaitForSeconds(0.2f);
         }
+    }
+
+    private void OnClientConnected(ulong clientId)
+    {
+        // when the local client connects, restart the local car lookup and loading flow
+        if (NetworkManager.Singleton == null) return;
+        if (clientId != NetworkManager.Singleton.LocalClientId) return;
+
+        // clear any previous state and restart coroutines
+        ClearLocalState();
+        StartCoroutine(FindLocalCar());
+        StartCoroutine(LoadVideosWhenReady());
+    }
+
+    private void OnClientDisconnected(ulong clientId)
+    {
+        if (NetworkManager.Singleton == null) return;
+        if (clientId != NetworkManager.Singleton.LocalClientId) return;
+
+        // clear local references so UI/state can reset cleanly
+        ClearLocalState();
+    }
+
+    private void ClearLocalState()
+    {
+        if (myCar != null)
+        {
+            try
+            {
+                myCar.wordsCompleted.OnValueChanged -= OnWordsCompletedChanged;
+                myCar.wordSet.OnValueChanged -= OnWordSetValueChanged;
+            }
+            catch { }
+        }
+
+        myCar = null;
+        videos = null;
+        words = null;
+        if (videoPlayer != null) videoPlayer.clip = null;
     }
 
     private void OnWordsCompletedChanged(int oldValue, int newValue)
@@ -84,6 +189,12 @@ public class RaceManager : MonoBehaviour
         if (idx >= videos.Count) idx = videos.Count - 1;
 
         videoPlayer.clip = videos[idx];
+    }
+
+    private void OnWordSetValueChanged(int oldValue, int newValue)
+    {
+        // reload videos/words when authoritative wordSet changes
+        LoadVideoSet(newValue);
     }
 
     // ==================== Gameplay / Submission ====================
@@ -176,10 +287,18 @@ public class RaceManager : MonoBehaviour
         gameOverUI.SetActive(false);
         connectionUI.SetActive(false);
         typingManager.Reset();
-
+        // reload clip to match current wordsCompleted/state. If videos were reloaded
+        // by the wordSet change subscription, this will be correct; otherwise, clear clip.
         if (videos != null && videos.Count > 0)
         {
-            videoPlayer.clip = videos[0];
+            int idx = 0;
+            if (myCar != null)
+            {
+                idx = myCar.wordsCompleted.Value;
+                if (idx < 0) idx = 0;
+                if (idx >= videos.Count) idx = videos.Count - 1;
+            }
+            videoPlayer.clip = videos[idx];
         }
     }
 
@@ -215,10 +334,24 @@ public class RaceManager : MonoBehaviour
         }
     }
 
+    private void OnDestroy()
+    {
+        if (myCar != null)
+        {
+            myCar.wordsCompleted.OnValueChanged -= OnWordsCompletedChanged;
+            myCar.wordSet.OnValueChanged -= OnWordSetValueChanged;
+        }
+    }
+
     // ==================== Helpers ====================
     public int GetWordCount()
     {
-        return words.Count;
+        return (words == null) ? 0 : words.Count;
+    }
+
+    public int GetVideoSetCount()
+    {
+        return (videoSetsData == null) ? 0 : videoSetsData.Count;
     }
 }
 

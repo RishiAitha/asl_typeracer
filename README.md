@@ -9,11 +9,15 @@
 
 ## Resources
 - Unity version: 6000.0.48f1
-- Packages used: Netcode for GameObjects, Unity Transport (UTP), Unity Services (Relay, Matchmaker, Lobbies, Authentication), TextMeshPro
+- Packages used: Netcode for GameObjects, Unity Transport (UTP), Unity Services (Relay, Matchmaker, Lobbies, Authentication), TextMeshPro, and ParrelSync (for testing)
+- To test this project:
+    - In editor, use ParrelSync clones to test multiple players (this is easiest).
+    - For builds, if they are run on the same computer they will have the same player ID, so quick play won't work.
+        - You can still manually connect on three builds on the same computer though.
 - Useful links:
   - Netcode for GameObjects: https://docs-multiplayer.unity3d.com
   - Matchmaker: https://docs.unity.com/en-us/matchmaker
-  - Relay: https://docs.unity.com/en-us/relay
+  - Relay: https://docs.unity.com/en-us/relay/
 
 ## Code Reference
 

@@ -3358,14 +3358,14 @@ MonoBehaviour:
     - RICH
     - AND
     - THIN
-  words: []
-  videos: []
   typingManager: {fileID: 2064622284}
   videoPlayer: {fileID: 669219703}
   connectionUI: {fileID: 1975914495}
   gameUI: {fileID: 720238281}
   gameOverUI: {fileID: 2090460918}
   gameOverText: {fileID: 1240152164}
+  words: []
+  videos: []
 --- !u!114 &1275659159
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -3991,7 +3991,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   statusText: {fileID: 842129215}
-  ipInput: {fileID: 620799372}
+  joinCodeInput: {fileID: 620799372}
   gameUI: {fileID: 720238281}
   connectionUI: {fileID: 1975914495}
   quickPlayButton: {fileID: 903775409}
