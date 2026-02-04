@@ -9,7 +9,7 @@
 
 ## Resources
 - Unity version: 6000.0.48f1
-- Packages used: Netcode for GameObjects, Unity Transport (UTP), Unity Services (Relay, Matchmaker, Lobbies, Authentication), TextMeshPro, and ParrelSync (for testing)
+- Packages used: Netcode for GameObjects, Unity Multiplayer Services (Relay, Matchmaker, Lobbies, Authentication), TextMeshPro, and ParrelSync (for testing)
 - To test this project:
     - In editor, use ParrelSync clones to test multiple players (this is easiest).
     - For builds, if they are run on the same computer they will have the same player ID, so quick play won't work.
